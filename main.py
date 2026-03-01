@@ -1,15 +1,18 @@
 import os
 import logging
+import json
+import base64
+import requests
 from typing import List
+from datetime import datetime, timedelta
+import pytz
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import google.generativeai as genai
 from pymongo import MongoClient
-from datetime import datetime, timedelta
-import json
-import pytz
 
 # Google Calendar API imports
 from google.oauth2.service_account import Credentials
@@ -31,12 +34,12 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Gemini Configuration
+# ==========================================
+# CONFIGURATIONS (Gemini & MongoDB)
+# ==========================================
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-# Using the fast, efficient model for routing and extraction
 model = genai.GenerativeModel('gemini-2.5-flash-lite') 
 
-# MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     db = MongoClient(MONGO_URI)["nyaya_db"]
@@ -47,7 +50,9 @@ else:
     clients_collection = None
     appointments_collection = None
 
-# --- DATA MODELS ---
+# ==========================================
+# DATA MODELS
+# ==========================================
 class HistoryItem(BaseModel):
     role: str  # "user" or "ai"
     content: str
@@ -55,80 +60,135 @@ class HistoryItem(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     client_id: str = "default_client"
-    history: List[HistoryItem] = []  # Added memory
+    history: List[HistoryItem] = []
 
-# --- HELPER: FORMAT HISTORY ---
+class BookRequest(BaseModel):
+    client_id: str
+    date: str       # "YYYY-MM-DD"
+    time: str       # "10:00 AM"
+
 def format_history(history: List[HistoryItem]) -> str:
-    """Converts the history array into a readable text block for the AI."""
     if not history:
         return "No previous conversation."
-    # Keep the last 6 interactions (12 messages) to save tokens
     return "\n".join([f"{h.role.upper()}: {h.content}" for h in history[-12:]]) 
 
 # ==========================================
-# GOOGLE CALENDAR INTEGRATION
+# SARVAM AI TEXT-TO-SPEECH (REST)
 # ==========================================
-def get_available_slots() -> list:
-    """Fetches real available slots from the lawyer's Google Calendar."""
-    if not os.path.exists("service_account.json"):
-        logger.warning("service_account.json not found. Using fallback demo slots.")
-        return ["Tomorrow 10:00 AM", "Tomorrow 4:00 PM", "Wednesday 11:30 AM (Demo)"]
+def generate_malayalam_audio(text: str) -> str:
+    """Converts Malayalam text to speech using Sarvam AI."""
+    sarvam_key = os.getenv("SARVAM_API_KEY")
+    if not sarvam_key:
+        logger.warning("SARVAM_API_KEY not found. Skipping audio generation.")
+        return None
 
-    try:
-        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-        creds = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
-        service = build('calendar', 'v3', credentials=creds)
-        calendar_id = os.getenv("LAWYER_CALENDAR_ID", "primary")
-
-        tz = pytz.timezone('Asia/Kolkata')
-        now = datetime.now(tz)
-        time_min = now.isoformat()
-        time_max = (now + timedelta(days=4)).isoformat()
-
-        events_result = service.events().list(
-            calendarId=calendar_id, timeMin=time_min, timeMax=time_max,
-            singleEvents=True, orderBy='startTime').execute()
-        events = events_result.get('items', [])
-
-        available_slots = []
-        for day_offset in range(1, 4):
-            target_date = now + timedelta(days=day_offset)
-            if target_date.weekday() >= 5: # Skip weekends (Saturday=5, Sunday=6)
-                continue
-                
-            for hour in [10, 14, 16]: # Default slots: 10 AM, 2 PM, 4 PM
-                slot_start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
-                slot_end = slot_start + timedelta(hours=1)
-                
-                conflict = False
-                for event in events:
-                    start_str = event['start'].get('dateTime', event['start'].get('date'))
-                    end_str = event['end'].get('dateTime', event['end'].get('date'))
-                    
-                    if 'T' not in start_str: 
-                        continue # Skip all-day events
-                        
-                    ev_start = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-                    ev_end = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-                    
-                    if not (slot_end <= ev_start or slot_start >= ev_end):
-                        conflict = True
-                        break
-                
-                if not conflict:
-                    available_slots.append(slot_start.strftime("%A %I:%M %p"))
-        
-        return available_slots if available_slots else ["No free slots available in the next few days."]
+    url = "https://api.sarvam.ai/text-to-speech"
+    headers = {
+        "api-subscription-key": sarvam_key,
+        "Content-Type": "application/json"
+    }
     
+    clean_text = text.replace('\n', ' ').strip()
+    
+    payload = {
+        "inputs": [clean_text],
+        "target_language_code": "ml-IN",
+        "speaker": "anushka",
+        "pitch": 0,
+        "pace": 1.0,
+        "loudness": 1.5,
+        "speech_sample_rate": 8000,
+        "enable_preprocessing": True,
+        "model": "bulbul:v2" 
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            if "audios" in data and len(data["audios"]) > 0:
+                return data["audios"][0]
+        else:
+            logger.error(f"Sarvam API Error: {response.status_code} - {response.text}")
+            return None
     except Exception as e:
-        logger.error(f"Calendar Error: {e}")
-        return ["Error connecting to calendar system."]
+        logger.error(f"TTS Request Error: {e}")
+        return None
 
 # ==========================================
-# AGENT 1: THE ROUTER
+# GOOGLE CALENDAR HELPERS
+# ==========================================
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+CALENDAR_ID = os.getenv("LAWYER_CALENDAR_ID", "primary")
+TZ = pytz.timezone('Asia/Kolkata')
+
+def get_calendar_service():
+    if not os.path.exists("service_account.json"):
+        return None
+    try:
+        creds = Credentials.from_service_account_file('service_account.json', scopes=SCOPES)
+        return build('calendar', 'v3', credentials=creds)
+    except Exception as e:
+        logger.error(f"Failed to initialize Calendar service: {e}")
+        return None
+
+def get_available_slots() -> list:
+    now = datetime.now(TZ)
+    busy_periods = []
+    service = get_calendar_service()
+
+    if service:
+        try:
+            time_min = now.isoformat()
+            time_max = (now + timedelta(days=14)).isoformat()
+
+            events_result = service.events().list(
+                calendarId=CALENDAR_ID, timeMin=time_min, timeMax=time_max,
+                singleEvents=True, orderBy='startTime').execute()
+            
+            for event in events_result.get('items', []):
+                start_str = event['start'].get('dateTime', event['start'].get('date'))
+                end_str = event['end'].get('dateTime', event['end'].get('date'))
+                if 'T' in start_str:
+                    busy_periods.append((
+                        datetime.fromisoformat(start_str.replace('Z', '+00:00')),
+                        datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                    ))
+        except Exception as e:
+            logger.error(f"Calendar Fetch Error: {e}")
+    else:
+        logger.warning("Calendar service unavailable. Showing all default slots as available.")
+
+    available_slots = []
+    for day_offset in range(1, 15):
+        target_date = now + timedelta(days=day_offset)
+        if target_date.weekday() >= 5:
+            continue
+
+        day_slots = []
+        for hour in [10, 11, 14, 15, 16]: 
+            slot_start = target_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            slot_end = slot_start + timedelta(hours=1)
+
+            conflict = any(
+                not (slot_end <= bs or slot_start >= be) for bs, be in busy_periods
+            )
+            if not conflict:
+                day_slots.append(slot_start.strftime("%I:%M %p").lstrip('0'))
+
+        if day_slots:
+            available_slots.append({
+                "date": target_date.strftime("%Y-%m-%d"),
+                "day": target_date.strftime("%A"),
+                "slots": day_slots
+            })
+
+    return available_slots
+
+# ==========================================
+# AGENTS & ROUTING
 # ==========================================
 def get_intent(user_message: str, history: List[HistoryItem]) -> str:
-    """Micro-prompt to route the query cheaply."""
     history_text = format_history(history)
     prompt = f"""
     CHAT HISTORY:
@@ -147,56 +207,29 @@ def get_intent(user_message: str, history: List[HistoryItem]) -> str:
         logger.error(f"Router Error: {e}")
         return "CASE"
 
-# ==========================================
-# AGENT 2: THE SCHEDULER
-# ==========================================
-def handle_scheduling(user_message: str, client_id: str, history: List[HistoryItem]):
-    """Handles appointment booking with real Google Calendar data."""
-    real_slots = get_available_slots()
-    slots_str = ", ".join(real_slots)
-    history_text = format_history(history)
+def handle_scheduling(client_id: str):
+    slots = get_available_slots()
     
-    schema = {
-        "type": "OBJECT",
-        "properties": {
-            "reply_malayalam": {"type": "STRING"},
-            "is_confirmed": {"type": "BOOLEAN"},
-            "booked_slot": {"type": "STRING"}
+    if not slots:
+        msg = "ക്ഷമിക്കണം, അടുത്ത ദിവസങ്ങളിൽ ലഭ്യമായ സ്ലോട്ടുകൾ ഒന്നുമില്ല."
+        audio_b64 = generate_malayalam_audio(msg)
+        return {
+            "response": msg,
+            "type": "text",
+            "audio": audio_b64
         }
-    }
-    
-    prompt = f"""
-    CHAT HISTORY: {history_text}
-    NEW MESSAGE: {user_message}
-    AVAILABLE SLOTS: {slots_str}
-    
-    TASK: Help user book a slot in Malayalam. Understand context (e.g., if they say 'the first one', look at the history to see what was offered). 
-    If they selected a valid slot, set is_confirmed to true and extract the booked_slot exactly as it is written in AVAILABLE SLOTS.
-    """
-    
-    response = model.generate_content(
-        prompt, 
-        generation_config={"response_mime_type": "application/json", "response_schema": schema}
-    )
-    data = json.loads(response.text)
-    
-    # Save to MongoDB if confirmed
-    if data.get("is_confirmed") and data.get("booked_slot") and appointments_collection is not None:
-        appointments_collection.insert_one({
-            "client_id": client_id, 
-            "slot": data.get("booked_slot"), 
-            "status": "booked",
-            "created_at": datetime.now()
-        })
-        logger.info(f"Booked {data.get('booked_slot')} for {client_id}")
         
-    return {"response": data.get("reply_malayalam")}
+    msg = "ദയവായി നിങ്ങൾക്ക് സൗകര്യപ്രദമായ തീയതിയും സമയവും തിരഞ്ഞെടുക്കുക:"
+    audio_b64 = generate_malayalam_audio(msg)
+    
+    return {
+        "type": "calendar",
+        "message": msg,
+        "available_slots": slots,
+        "audio": audio_b64
+    }
 
-# ==========================================
-# AGENT 3: THE CASE LAWYER
-# ==========================================
 def handle_case_query(user_message: str, client_id: str, history: List[HistoryItem]):
-    """Handles case details retrieval safely."""
     case_context = "No data."
     if clients_collection is not None:
         client_data = clients_collection.find_one({"client_id": client_id}, {"_id": 0})
@@ -229,23 +262,107 @@ def handle_case_query(user_message: str, client_id: str, history: List[HistoryIt
     data = json.loads(response.text)
     
     if not data.get("found_in_context"):
-        return {"response": "ക്ഷമിക്കണം, നിങ്ങളുടെ കേസ് ഫയലിലുള്ള കാര്യങ്ങൾ മാത്രമേ എനിക്ക് പറയാൻ കഴിയൂ, നിയമപരമായ ഉപദേശങ്ങൾ നൽകാൻ എനിക്ക് അധികാരമില്ല."}
+        fallback_msg = "ക്ഷമിക്കണം, നിങ്ങളുടെ കേസ് ഫയലിലുള്ള കാര്യങ്ങൾ മാത്രമേ എനിക്ക് പറയാൻ കഴിയൂ, നിയമപരമായ ഉപദേശങ്ങൾ നൽകാൻ എനിക്ക് അധികാരമില്ല."
+        audio_b64 = generate_malayalam_audio(fallback_msg)
+        return {"response": fallback_msg, "audio": audio_b64}
     
-    return {"response": data.get("reply_malayalam")}
+    reply_msg = data.get("reply_malayalam")
+    audio_b64 = generate_malayalam_audio(reply_msg)
+    
+    return {
+        "response": reply_msg,
+        "audio": audio_b64
+    }
 
 # ==========================================
-# MAIN API ENDPOINT
+# ENDPOINTS
 # ==========================================
+@app.post("/api/book")
+async def book_appointment(request: BookRequest):
+    if appointments_collection is None:
+        raise HTTPException(status_code=500, detail="Database not configured")
+
+    try:
+        existing_booking = appointments_collection.find_one({
+            "client_id": request.client_id,
+            "date": request.date,
+            "status": "booked"
+        })
+        
+        if existing_booking:
+            raise HTTPException(
+                status_code=400, 
+                detail="ഒരു ദിവസം ഒരു മീറ്റിംഗ് മാത്രമേ ബുക്ക് ചെയ്യാൻ സാധിക്കൂ. (You can only book one meeting per day.)"
+            )
+
+        start_dt_unaware = datetime.strptime(f"{request.date} {request.time}", "%Y-%m-%d %I:%M %p")
+        start_dt = TZ.localize(start_dt_unaware)
+        end_dt = start_dt + timedelta(hours=1)
+
+        service = get_calendar_service()
+        if not service:
+             raise HTTPException(status_code=500, detail="Calendar service is unavailable.")
+
+        events_result = service.events().list(
+            calendarId=CALENDAR_ID,
+            timeMin=start_dt.isoformat(),
+            timeMax=end_dt.isoformat(),
+            singleEvents=True
+        ).execute()
+
+        if events_result.get('items', []):
+            raise HTTPException(
+                status_code=409, 
+                detail="ക്ഷമിക്കണം, ഈ സ്ലോട്ട് ഇപ്പോൾ മറ്റൊരാൾ ബുക്ക് ചെയ്തിട്ടുണ്ട്. മറ്റൊരു സമയം തിരഞ്ഞെടുക്കുക."
+            )
+
+        event_body = {
+            'summary': f'Legal Consultation - {request.client_id}',
+            'description': f'Automatically scheduled via Nyaya Sahayi Bot for Client ID: {request.client_id}',
+            'start': {
+                'dateTime': start_dt.isoformat(),
+                'timeZone': 'Asia/Kolkata',
+            },
+            'end': {
+                'dateTime': end_dt.isoformat(),
+                'timeZone': 'Asia/Kolkata',
+            },
+        }
+        
+        service.events().insert(calendarId=CALENDAR_ID, body=event_body).execute()
+
+        appointments_collection.insert_one({
+            "client_id": request.client_id,
+            "date": request.date,
+            "time": request.time,
+            "status": "booked",
+            "created_at": datetime.now()
+        })
+        
+        logger.info(f"Booked {request.date} {request.time} for {request.client_id}")
+        return {
+            "success": True,
+            "message": f"മീറ്റിംഗ് വിജയകരമായി ബുക്ക് ചെയ്തു!\n📅 {request.date}\n🕐 {request.time}"
+        }
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"Booking Error: {repr(e)}")
+        raise HTTPException(status_code=500, detail="Booking failed due to a server error.")
+
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
     try:
-        # 1. Fast Routing using Memory
-        intent = get_intent(request.message, request.history)
-        logger.info(f"Detected Intent: {intent} for Client: {request.client_id}")
+        if "schedule" in request.message.lower() or "ബുക്ക്" in request.message:
+            intent = "SCHEDULE"
+            logger.info(f"Intent - schedule ")
+        else:
+            intent = get_intent(request.message, request.history)
+            logger.info(f"Detected Intent: {intent} for Client: {request.client_id}")
         
-        # 2. Directed Execution
         if intent == "SCHEDULE":
-            return handle_scheduling(request.message, request.client_id, request.history)
+            return handle_scheduling(request.client_id)
         else:
             return handle_case_query(request.message, request.client_id, request.history)
             

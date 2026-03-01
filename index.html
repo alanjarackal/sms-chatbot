@@ -152,6 +152,199 @@
             display: none;
         }
 
+        /* ===== CALENDAR WIDGET ===== */
+        .calendar-widget {
+            background: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 1rem;
+            padding: 1.25rem;
+            max-width: 380px;
+            width: 100%;
+            animation: fadeIn 0.3s ease-out;
+            box-shadow: 0 4px 24px rgba(79, 70, 229, 0.08);
+            align-self: flex-start;
+        }
+
+        .calendar-widget .cal-header-msg {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin-bottom: 0.75rem;
+            line-height: 1.4;
+        }
+
+        .cal-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }
+
+        .cal-nav button {
+            background: var(--bg-secondary);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            padding: 0;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .cal-nav button:hover {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+        }
+
+        .cal-nav .cal-month-label {
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--text-main);
+        }
+
+        .cal-weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            text-align: center;
+            margin-bottom: 0.25rem;
+        }
+
+        .cal-weekdays span {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            padding: 0.25rem 0;
+        }
+
+        .cal-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 3px;
+        }
+
+        .cal-day {
+            aspect-ratio: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            cursor: default;
+            transition: all 0.15s;
+            position: relative;
+        }
+
+        .cal-day.available {
+            color: var(--primary);
+            font-weight: 600;
+            cursor: pointer;
+            background: rgba(79, 70, 229, 0.06);
+        }
+
+        .cal-day.available:hover {
+            background: var(--primary);
+            color: #fff;
+            transform: scale(1.1);
+        }
+
+        .cal-day.available::after {
+            content: '';
+            position: absolute;
+            bottom: 2px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: var(--primary);
+        }
+
+        .cal-day.available:hover::after {
+            background: #fff;
+        }
+
+        .cal-day.selected {
+            background: var(--primary);
+            color: #fff;
+            transform: scale(1.1);
+        }
+
+        .cal-day.selected::after {
+            background: #fff;
+        }
+
+        .cal-day.empty {
+            visibility: hidden;
+        }
+
+        .cal-day.today {
+            border: 2px solid var(--primary);
+        }
+
+        .time-slots-panel {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border-color);
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .time-slots-panel .ts-date-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 0.5rem;
+        }
+
+        .time-slots-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .time-slot-btn {
+            background: var(--bg-secondary);
+            color: var(--primary);
+            border: 1px solid rgba(79, 70, 229, 0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .time-slot-btn:hover {
+            background: var(--primary);
+            color: #fff;
+            border-color: var(--primary);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+        }
+
+        .cal-booking-confirm {
+            text-align: center;
+            padding: 1rem;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .cal-booking-confirm .confirm-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .cal-booking-confirm .confirm-text {
+            font-size: 0.9rem;
+            color: var(--text-main);
+            line-height: 1.6;
+            white-space: pre-line;
+        }
+
         /* Responsive adjustments */
         @media (max-width: 640px) {
             header {
@@ -183,7 +376,10 @@
                 display: none;
             }
 
-            /* Hide "Send" text on tiny screens, show only icon if present */
+            .calendar-widget {
+                max-width: 100%;
+                padding: 1rem;
+            }
         }
     </style>
 </head>
@@ -212,20 +408,20 @@
             </svg>
         </button>
     </div>
-
     <script>
-        // Update this URL after setting up Ngrok in Terminal 2
         const BACKEND_URL = "http://localhost:8000/api/chat";
+        const BOOK_URL = "http://localhost:8000/api/book";
 
         const chatContainer = document.getElementById('chat-container');
         const userInput = document.getElementById('user-input');
         const sendBtn = document.getElementById('send-btn');
         const typingIndicator = document.getElementById('typing-indicator');
 
-        // Extract client token from URL parameters
         const urlParams = new URLSearchParams(window.location.search);
         const clientToken = urlParams.get('token') || 'default_client';
 
+        const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
         function appendMessage(text, isUser) {
             const msgDiv = document.createElement('div');
@@ -235,36 +431,218 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
+        // =========== CALENDAR WIDGET ===========
+        function renderCalendar(availableSlots, headerMsg) {
+            const slotMap = {};
+            availableSlots.forEach(s => { slotMap[s.date] = s.slots; });
+
+            const firstDate = new Date(availableSlots[0].date + 'T00:00:00');
+            let viewYear = firstDate.getFullYear();
+            let viewMonth = firstDate.getMonth();
+
+            const widget = document.createElement('div');
+            widget.className = 'calendar-widget';
+            chatContainer.appendChild(widget);
+
+            function draw() {
+                widget.innerHTML = '';
+
+                const msgP = document.createElement('div');
+                msgP.className = 'cal-header-msg';
+                msgP.textContent = headerMsg || 'Pick a date & time for your meeting:';
+                widget.appendChild(msgP);
+
+                const nav = document.createElement('div');
+                nav.className = 'cal-nav';
+                const prevBtn = document.createElement('button');
+                prevBtn.innerHTML = '&#8249;';
+                prevBtn.onclick = () => { viewMonth--; if (viewMonth < 0) { viewMonth = 11; viewYear--; } draw(); };
+                const nextBtn = document.createElement('button');
+                nextBtn.innerHTML = '&#8250;';
+                nextBtn.onclick = () => { viewMonth++; if (viewMonth > 11) { viewMonth = 0; viewYear++; } draw(); };
+                const label = document.createElement('span');
+                label.className = 'cal-month-label';
+                label.textContent = `${MONTH_NAMES[viewMonth]} ${viewYear}`;
+                nav.appendChild(prevBtn);
+                nav.appendChild(label);
+                nav.appendChild(nextBtn);
+                widget.appendChild(nav);
+
+                const wkRow = document.createElement('div');
+                wkRow.className = 'cal-weekdays';
+                WEEKDAY_LABELS.forEach(d => { const sp = document.createElement('span'); sp.textContent = d; wkRow.appendChild(sp); });
+                widget.appendChild(wkRow);
+
+                const grid = document.createElement('div');
+                grid.className = 'cal-grid';
+                const firstDayOfMonth = new Date(viewYear, viewMonth, 1).getDay();
+                const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+                const today = new Date();
+
+                for (let i = 0; i < firstDayOfMonth; i++) {
+                    const empty = document.createElement('div');
+                    empty.className = 'cal-day empty';
+                    grid.appendChild(empty);
+                }
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cal-day';
+                    cell.textContent = d;
+
+                    const dateStr = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+                    if (d === today.getDate() && viewMonth === today.getMonth() && viewYear === today.getFullYear()) {
+                        cell.classList.add('today');
+                    }
+
+                    if (slotMap[dateStr]) {
+                        cell.classList.add('available');
+                        cell.onclick = () => showTimeSlots(dateStr, slotMap[dateStr], widget, grid);
+                    }
+
+                    grid.appendChild(cell);
+                }
+                widget.appendChild(grid);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+
+            draw();
+        }
+
+        function showTimeSlots(dateStr, slots, widget) {
+            const existing = widget.querySelector('.time-slots-panel');
+            if (existing) existing.remove();
+
+            widget.querySelectorAll('.cal-day').forEach(c => c.classList.remove('selected'));
+            widget.querySelectorAll('.cal-day.available').forEach(c => {
+                const d = parseInt(dateStr.split('-')[2]);
+                if (parseInt(c.textContent) === d) c.classList.add('selected');
+            });
+
+            const panel = document.createElement('div');
+            panel.className = 'time-slots-panel';
+
+            const dateObj = new Date(dateStr + 'T00:00:00');
+            const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+            const label = document.createElement('div');
+            label.className = 'ts-date-label';
+            label.textContent = `📅 ${dayName}`;
+            panel.appendChild(label);
+
+            const grid = document.createElement('div');
+            grid.className = 'time-slots-grid';
+
+            slots.forEach(time => {
+                const btn = document.createElement('button');
+                btn.className = 'time-slot-btn';
+                btn.textContent = `🕐 ${time}`;
+                btn.onclick = () => bookAppointment(dateStr, time, widget);
+                grid.appendChild(btn);
+            });
+
+            panel.appendChild(grid);
+            widget.appendChild(panel);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        async function bookAppointment(date, time, widget) {
+            // Disable buttons to prevent double-clicks
+            widget.querySelectorAll('.time-slot-btn').forEach(b => {
+                b.disabled = true;
+                b.style.opacity = '0.5';
+            });
+
+            try {
+                const res = await fetch(BOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ client_id: clientToken, date, time })
+                });
+
+                const data = await res.json();
+
+                // Handle server errors (like double-booking rules)
+                if (!res.ok) {
+                    const errorMessage = data.detail || 'ക്ഷമിക്കണം, ബുക്കിംഗ് പരാജയപ്പെട്ടു.';
+                    appendMessage(errorMessage, false);
+
+                    widget.querySelectorAll('.time-slot-btn').forEach(b => {
+                        b.disabled = false;
+                        b.style.opacity = '1';
+                    });
+
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                    return;
+                }
+
+                // If successful
+                const panel = widget.querySelector('.time-slots-panel');
+                if (panel) panel.remove();
+
+                widget.innerHTML = '';
+                const confirm = document.createElement('div');
+                confirm.className = 'cal-booking-confirm';
+                confirm.innerHTML = `
+                    <div class="confirm-icon">✅</div>
+                    <div class="confirm-text">${data.message || 'Meeting booked successfully!'}</div>
+                `;
+                widget.appendChild(confirm);
+
+            } catch (err) {
+                console.error('Booking error:', err);
+                appendMessage('നെറ്റ്‌വർക്ക് തകരാർ. ദയവായി വീണ്ടും ശ്രമിക്കുക.', false);
+            }
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // =========== SEND MESSAGE & PLAY AUDIO ===========
         async function sendMessage() {
             const message = userInput.value.trim();
             if (!message) return;
 
             appendMessage(message, true);
             userInput.value = '';
-
-            // Show typing indicator
             typingIndicator.style.display = 'block';
 
             try {
                 const response = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: message,
-                        client_id: clientToken
-                    })
+                    body: JSON.stringify({ message, client_id: clientToken })
                 });
 
                 const data = await response.json();
 
-                if (data.response) {
-                    appendMessage(data.response, false);
-                } else {
-                    appendMessage("I encountered an error processing your request.", false);
+                // 1. Render Calendar if it's a scheduling intent
+                if (data.type === 'calendar' && data.available_slots) {
+                    renderCalendar(data.available_slots, data.message);
                 }
+                // 2. Render Text if present
+                else if (data.response) {
+                    appendMessage(data.response, false);
+                }
+                // 3. Fallback error
+                else {
+                    appendMessage('I encountered an error processing your request.', false);
+                }
+
+                // 4. Play Audio if Sarvam returned it
+                if (data.audio) {
+                    try {
+                        const audioUrl = "data:audio/wav;base64," + data.audio;
+                        const aiVoice = new Audio(audioUrl);
+                        aiVoice.play().catch(e => {
+                            console.log("Browser blocked autoplay or audio format issue:", e);
+                        });
+                    } catch (err) {
+                        console.error("Error playing audio:", err);
+                    }
+                }
+
             } catch (error) {
                 console.error('Error:', error);
-                appendMessage("Fail to connect to the backend. Please ensure the server is running.", false);
+                appendMessage('Failed to connect to the backend. Please ensure the server is running.', false);
             } finally {
                 typingIndicator.style.display = 'none';
             }
@@ -275,6 +653,7 @@
             if (e.key === 'Enter') sendMessage();
         });
     </script>
+
 </body>
 
 </html>
