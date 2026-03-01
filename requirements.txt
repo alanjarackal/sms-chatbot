@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+pymongo
+dnspython
+pytz
+requests
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
