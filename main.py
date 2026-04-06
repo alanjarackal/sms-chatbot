@@ -67,11 +67,10 @@ class BookRequest(BaseModel):
     client_id: str
     date: str       # "YYYY-MM-DD"
     time: str       # "10:00 AM"
-from datetime import datetime
 
 # 1. Update the Pydantic Model to expect the 'cid'
 class FullCaseData(BaseModel):
-    cid: str  # <--- NEW FIELD
+    cid: str  
     clientName: str
     phoneNumber: str
     cnrNumber: str
@@ -79,42 +78,43 @@ class FullCaseData(BaseModel):
     status: str
     entryType: str = "Manual"
 
-# Define your collections
-# clients_collection = db["clients"]
+# 2. Make sure you define the new case collection at the top of your file
+# (Right below clients_collection = db["clients"])
+# case_details_collection = db["caseDetails"]
 
-
-# 2. Update the Endpoint
+# 3. The Corrected Endpoint (No 'await' on the db calls)
 @app.post("/api/add_case")
 async def add_case_to_cloud(data: FullCaseData):
     try:
         now = datetime.utcnow().isoformat()
 
         # --- TABLE 1: CLIENT DETAILS ---
-        # We use update_one with upsert=True. 
-        # If the CID exists, it updates the name/phone. If not, it creates a new client.
         client_doc = {
             "cid": data.cid,
             "name": data.clientName,
             "phoneNumber": data.phoneNumber,
             "lastUpdated": now
         }
-        await clients_collection.update_one(
+        
+        # REMOVED 'await' HERE
+        clients_collection.update_one(
             {"cid": data.cid}, 
             {"$set": client_doc}, 
             upsert=True
         )
 
         # --- TABLE 2: CASE DETAILS ---
-        # We insert a new document for the case, attaching the CID as the foreign key
         case_doc = {
-            "cid": data.cid, # <--- This is what connects the two tables
+            "cid": data.cid, 
             "cnrNumber": data.cnrNumber,
             "nextHearingDate": data.nextHearingDate,
             "status": data.status,
             "entryType": data.entryType,
             "createdAt": now
         }
-        result = await case_details_collection.insert_one(case_doc)
+        
+        # REMOVED 'await' HERE
+        result = case_details_collection.insert_one(case_doc)
 
         if result.inserted_id:
             return {
@@ -126,7 +126,7 @@ async def add_case_to_cloud(data: FullCaseData):
             raise HTTPException(status_code=500, detail="Failed to insert case details")
 
     except Exception as e:
-        print(f"Error saving to MongoDB: {e}")
+        logger.error(f"Error saving to MongoDB: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
         
 def format_history(history: List[HistoryItem]) -> str:
