@@ -5,6 +5,7 @@ import base64
 import requests
 from typing import List
 from datetime import datetime, timedelta
+from fastapi import Query
 import pytz
 
 from fastapi import FastAPI, HTTPException
