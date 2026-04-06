@@ -43,6 +43,7 @@ model = genai.GenerativeModel('gemini-2.5-flash-lite')
 MONGO_URI = os.getenv("MONGO_URI")
 if MONGO_URI:
     db = MongoClient(MONGO_URI)["nyaya_db"]
+    # db2 = MongoClient(MONGO_URI)["Case"]
     clients_collection = db["clients"]
     appointments_collection = db["appointments"]
     case_details_collection = db["caseDetails"]
@@ -68,6 +69,7 @@ class BookRequest(BaseModel):
     date: str       # "YYYY-MM-DD"
     time: str       # "10:00 AM"
 
+
 # 1. Update the Pydantic Model to expect the 'cid'
 class FullCaseData(BaseModel):
     cid: str  
@@ -77,6 +79,55 @@ class FullCaseData(BaseModel):
     nextHearingDate: str
     status: str
     entryType: str = "Manual"
+
+class CaseSearchResult(BaseModel):
+    caseNumber: str
+    clientName: str
+    status: str
+
+@app.get("/api/cases/search", response_model=List[CaseSearchResult])
+def search_cases(q: str = Query(..., min_length=3)):
+    try:
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "clients",         # Join with the clients collection
+                    "localField": "cid",       
+                    "foreignField": "cid",     
+                    "as": "client_info"        
+                }
+            },
+            {
+                "$unwind": {
+                    "path": "$client_info",
+                    "preserveNullAndEmptyArrays": True
+                }
+            },
+            {
+                "$match": {
+                    "$or": [
+                        {"cnrNumber": {"$regex": q, "$options": "i"}},
+                        {"client_info.name": {"$regex": q, "$options": "i"}}
+                    ]
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "caseNumber": "$cnrNumber",
+                    "clientName": {"$ifNull": ["$client_info.name", "Unknown Client"]},
+                    "status": "$status"
+                }
+            },
+            {"$limit": 15}
+        ]
+        
+        results = list(case_details_collection.aggregate(pipeline))
+        return results
+
+    except Exception as e:
+        logger.error(f"Search Error: {e}")
+        raise HTTPException(status_code=500, detail="Database search failed")
 
 # 2. Make sure you define the new case collection at the top of your file
 # (Right below clients_collection = db["clients"])
